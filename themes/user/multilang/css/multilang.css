@@ -1,0 +1,12 @@
+#multilang {
+
+}
+
+#multilang td.min-td {
+    width: 10px;
+    text-align: right;
+}
+
+#multilang tr.blank {
+    display: none;
+}
