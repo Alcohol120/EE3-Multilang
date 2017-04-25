@@ -24,7 +24,6 @@ class Multilang_mcp {
 
         $fortunes_list = $fortunes->addBasicList();
         $fortunes_list->addItem(lang('multilang_texts'), ee('CP/URL', 'addons/settings/multilang'));
-        $fortunes_list->addItem(lang('multilang_groups'), ee('CP/URL', 'addons/settings/multilang/groups'));
         $fortunes_list->addItem(lang('multilang_conf_languages'), ee('CP/URL', 'addons/settings/multilang/settings'));
 
     }
@@ -35,62 +34,106 @@ class Multilang_mcp {
 
         $view = ee("View")->make("multilang:main");
 
-//        $languages = ee()->db->select("*")
-//            ->from("multilang_languages")
-//            ->get();
-//
-//        $default_lang = ee()->db->select("conf_val")
-//            ->from("multilang_settings")
-//            ->where("conf_key", "default_lang")
-//            ->get();
-//
-//        $tags["languages"] = $languages->result_array();
-//        $tags["default_lang"] = $default_lang->row_array()["conf_val"];
-//
-//        if(ee()->input->post("save_languages")) {
-//
-//            $lang_names = ee()->input->post("language_name");
-//            $lang_codes = ee()->input->post("language_code");
-//
-//            unset($lang_names[0]);
-//            unset($lang_codes[0]);
-//
-//            try {
-//
-//                if(count($lang_names) != count($lang_codes)) throw new Exception("Unknown error!");
-//
-//                $new_lang = [];
-//                $old_lang = [];
-//
-//                ee()->db->s("multilang_languages", [ "is_default" => 0 ]);
-//
-//                foreach($lang_codes as $key=>$code) {
-//
-//                    if(!$code) throw new Exception(lang("multilang_err_0"));
-//                    if(!$lang_names[$key]) throw new Exception(lang("multilang_err_1"));
-//
-//                    if(!(bool)preg_match("/^[a-zA-Z]{2}$/", $code)) throw new Exception(lang("multilang_err_2"));
-//
-//                    $q = ee()->db->select("lang_id")
-//                        ->from("multilang_languages")
-//                        ->where("language_code", $code)
-//                        ->get();
-//
-////                    $lang[count($lang)] = [
-////                        "name" => $lang_names[$key],
-////                        "code" => $code
-////                    ];
-//
-//                }
-//
-//            } catch (Exception $e) {
-//                echo $e->getMessage();
-//            }
-//
-//        }
+        $q = ee()->db->select("lang_name, lang_code")
+            ->from("multilang_languages")
+            ->get();
+
+        $languages = [];
+
+        foreach($q->result_array() as $row) {
+            $languages[count($languages)] = $row;
+        }
+
+        $tags["languages"] = $languages;
+
+        if(ee()->input->post("save")) {
+
+            $keys = ee()->input->post("lang_key");
+            unset($keys[0]);
+
+            $key_names = [];
+            $data = [];
+
+            try {
+
+                foreach($keys as $k=>$key) {
+
+                    if($key == "") throw new Exception(lang("multilang_err_10"));
+                    if(!(bool)preg_match("/^[a-zA-Z0-9_]+$/", $key)) throw new Exception(lang("multilang_err_11"));
+                    if(array_search($key, $key_names) !== FALSE) throw new Exception(lang("multilang_err_12"));
+
+                    $key_names[count($key)] = $key;
+
+                    $lang = [];
+                    foreach($languages as $lng) {
+                        $str = ee()->input->post("lang_" . $lng["lang_code"])[$k];
+                        $lang[$lng["lang_code"]] = $str;
+                    }
+
+                    $data[count($data)] = [
+                        "key" => $key,
+                        "lang" => $lang
+                    ];
+
+                }
+
+                ee()->db->delete("multilang_data", [
+                    "group_id" => 1
+                ]);
+
+                foreach($data as $row) {
+
+                    ee()->db->insert("multilang_data", [
+                        "group_id" => 1,
+                        "data_key" => $row["key"],
+                        "data_val" => json_encode($row["lang"])
+                    ]);
+
+                }
+
+                ee('CP/Alert')->makeInline('multilang_data_success')
+                    ->asSuccess()
+                    ->withTitle(lang("multilang_success"))
+                    ->addToBody(lang("multilang_saved"))
+                    ->now();
+
+            } catch(Exception $e) {
+
+                ee('CP/Alert')->makeInline('multilang_data_error')
+                    ->asIssue()
+                    ->withTitle(lang("multilang_err"))
+                    ->addToBody($e->getMessage())
+                    ->now();
+
+            }
+
+        }
+
+        $q = ee()->db->select("*")
+            ->from("multilang_data")
+            ->get();
+
+        $data = [];
+
+        foreach($q->result_array() as $row) {
+
+            if($row["data_val"] == "") {
+                $lang = [];
+            } else {
+                $lang = json_decode($row["data_val"], TRUE);
+            }
+
+            $data[count($data)] = [
+                "key" => $row["data_key"],
+                "lang" => $lang
+            ];
+
+        }
+
+        $tags["data"] = $data;
 
         return [
-            "body" => "<h1>hello</h1>",
+            "body" => $view->render($tags),
             "breadcrumb" => [
                 ee("CP/URL")->make("addons/settings/multilang")->compile() => lang("multilang_module_name")
             ],
@@ -104,12 +147,6 @@ class Multilang_mcp {
         $tags = [];
 
         $view = ee("View")->make("multilang:settings");
-
-//        echo "<textarea>";
-//        var_dump(ee()->input->post("language_name"));
-//        var_dump(ee()->input->post("language_code"));
-//        var_dump(ee()->input->post("is_default"));
-//        echo "</textarea>";
 
         if(ee()->input->post("save_languages")) {
 
@@ -219,7 +256,7 @@ class Multilang_mcp {
                         ->addToBody(lang("multilang_saved"))
                         ->now();
 
-                    // @TODO make folders
+                    $this->create_start_files();
 
                 } catch(Exception $e) {
 
@@ -266,6 +303,44 @@ class Multilang_mcp {
             ],
             "heading" => lang("multilang_module_name")
         ];
+
+    }
+
+    private function create_start_files() {
+
+        $languages = ee()->db->select("*")
+            ->from("multilang_languages")
+            ->get();
+
+        try {
+
+            if(!@$file = file_get_contents(FCPATH . "index.php")) throw new Exception(lang("multilang_err_7"));
+
+            $file = preg_replace("/system_path = '(.*?)'/", "system_path = '../$1'", $file);
+
+            foreach($languages->result_array() as $lang) {
+
+                if(file_exists(FCPATH . $lang["lang_code"] . "/index.php")) continue;
+
+                if(!is_dir(FCPATH . $lang["lang_code"])) {
+                    mkdir(FCPATH . $lang["lang_code"]);
+                }
+
+                $output = str_replace("<?php", "<?php\ndefine(\"LANGUAGE_CODE\", \"" . $lang["lang_code"] . "\");", $file);
+
+                if(!@file_put_contents(FCPATH . $lang["lang_code"] . "/index.php", $output)) throw new Exception(lang("multilang_err_8"));
+
+            }
+
+        } catch(Exception $e) {
+
+            ee('CP/Alert')->makeInline('multilang_languages_error')
+                ->asIssue()
+                ->withTitle(lang("multilang_err"))
+                ->addToBody($e->getMessage())
+                ->now();
+
+        }
 
     }
 
